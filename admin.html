@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Photo Booth</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <h1 class="text-4xl font-bold text-center text-gray-800 mb-8">Panel de Administración 📸</h1>
+        
+        <div class="mb-8 p-6 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Crear Nuevo Evento</h2>
+            <form id="eventForm" class="flex flex-col gap-4">
+                <input type="text" id="eventTitle" placeholder="Título del Evento" required 
+                       class="p-3 border rounded-md focus:ring-2 focus:ring-blue-500 transition-colors duration-200">
+                <button type="submit" 
+                        class="bg-blue-600 text-white p-3 rounded-md font-bold hover:bg-blue-700 transition-colors duration-200">
+                    Crear Evento
+                </button>
+            </form>
+        </div>
+
+        <div>
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Eventos Existentes</h2>
+            <div id="eventsList" class="space-y-4">
+                </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        import { getStorage, ref, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+        // Configuración de Firebase - Reemplaza con tus credenciales
+        const firebaseConfig = {
+          apiKey: "AIzaSyAtqUp56hdHr9ShFvYyRhexFhFYG-UmBF4",
+          authDomain: "cabina-1dbe7.firebaseapp.com",
+          projectId: "cabina-1dbe7",
+          storageBucket: "cabina-1dbe7.firebasestorage.app",
+          messagingSenderId: "176812523438",
+          appId: "1:176812523438:web:e78ab1c349f3dbfc58d23f",
+          measurementId: "G-7YJL45YK6T"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        // Referencia a la colección de eventos en Firestore
+        const eventsColRef = collection(db, 'events');
+
+        // Autenticación anónima para el panel de administración
+        signInAnonymously(auth).catch((error) => {
+            console.error("Error al iniciar sesión anónima: ", error);
+            alert("Error al conectar con Firebase. Por favor, revisa tu consola.");
+        });
+
+        // ----------------- LÓGICA PARA CREAR EVENTOS -----------------
+        const eventForm = document.getElementById('eventForm');
+        const eventTitleInput = document.getElementById('eventTitle');
+
+        eventForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = eventTitleInput.value.trim();
+            if (title) {
+                try {
+                    // Agregar un nuevo documento a la colección 'events'
+                    const docRef = await addDoc(eventsColRef, {
+                        title: title,
+                        createdAt: new Date()
+                    });
+                    console.log("Evento creado con ID: ", docRef.id);
+                    eventTitleInput.value = '';
+                } catch (error) {
+                    console.error("Error al añadir evento: ", error);
+                    alert("Error al crear el evento.");
+                }
+            }
+        });
+
+        // ----------------- LÓGICA PARA MOSTRAR Y ELIMINAR EVENTOS -----------------
+        const eventsList = document.getElementById('eventsList');
+
+        // onSnapshot escucha los cambios en tiempo real en la colección 'events'
+        onSnapshot(eventsColRef, (snapshot) => {
+            eventsList.innerHTML = ''; // Limpiar la lista antes de volver a renderizar
+            snapshot.docs.forEach(doc => {
+                const event = doc.data();
+                const eventId = doc.id;
+
+                // Generar los enlaces y el contenedor para el QR
+                const cabinaLink = `cabina.html?id=${eventId}`;
+                const galeriaLink = `galeria.html?id=${eventId}`;
+
+                const eventItem = document.createElement('div');
+                eventItem.className = 'p-4 bg-white rounded-md shadow-md flex items-center justify-between flex-wrap gap-4';
+                eventItem.innerHTML = `
+                    <div class="flex-1 min-w-[200px]">
+                        <h3 class="text-xl font-bold text-gray-900">${event.title}</h3>
+                        <p class="text-sm text-gray-500">ID: ${eventId}</p>
+                    </div>
+                    <div class="flex items-center gap-4 flex-wrap">
+                        <a href="${cabinaLink}" target="_blank" class="text-sm text-blue-600 hover:underline">
+                            Ir a Cabina
+                        </a>
+                        <a href="${galeriaLink}" target="_blank" class="text-sm text-blue-600 hover:underline">
+                            Ir a Galería
+                        </a>
+                        <button class="delete-btn bg-red-500 text-white p-2 rounded-md font-bold text-sm hover:bg-red-600" data-id="${eventId}">
+                            Eliminar
+                        </button>
+                    </div>
+                    <div class="mt-4 w-full flex justify-center md:justify-start">
+                        <div id="qrcode-${eventId}" class="p-2 border border-gray-200 rounded-md"></div>
+                    </div>
+                `;
+                eventsList.appendChild(eventItem);
+
+                // Generar el código QR
+                new QRCode(document.getElementById(`qrcode-${eventId}`), {
+                    text: window.location.origin + window.location.pathname.replace('admin.html', '') + cabinaLink,
+                    width: 128,
+                    height: 128
+                });
+            });
+
+            // Añadir el listener para los botones de eliminar
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const eventIdToDelete = e.target.dataset.id;
+                    if (confirm('¿Estás seguro de que quieres eliminar este evento y todas sus fotos?')) {
+                        try {
+                            // 1. Eliminar fotos de Storage
+                            const storageRef = ref(storage, `images/${eventIdToDelete}/`);
+                            const listResult = await listAll(storageRef);
+                            const deletePromises = listResult.items.map(itemRef => deleteObject(itemRef));
+                            await Promise.all(deletePromises);
+                            
+                            // 2. Eliminar el documento del evento y su subcolección en Firestore
+                            const photosColRef = collection(db, 'events', eventIdToDelete, 'photos');
+                            const photosSnapshot = await getDocs(photosColRef);
+                            const deletePhotosPromises = photosSnapshot.docs.map(doc => deleteDoc(doc.ref));
+                            await Promise.all(deletePhotosPromises);
+
+                            // 3. Eliminar el documento del evento principal
+                            await deleteDoc(doc(db, 'events', eventIdToDelete));
+                            console.log("Evento y fotos eliminados con éxito.");
+                        } catch (error) {
+                            console.error("Error al eliminar el evento y/o las fotos: ", error);
+                            alert("Hubo un error al eliminar el evento. Revisa la consola.");
+                        }
+                    }
+                });
+            });
+        });
+
+    </script>
+</body>
+</html>

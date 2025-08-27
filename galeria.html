@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galería de Fotos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <style>
+        .photo-grid {
+            display: grid;
+            gap: 1rem;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        }
+        .photo-item {
+            width: 100%;
+            padding-bottom: 100%; /* 1:1 Aspect Ratio */
+            position: relative;
+        }
+        .photo-item img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.2s ease-in-out;
+        }
+        .photo-item img:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 p-8">
+    <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-10">
+            <h1 id="eventTitle" class="text-4xl md:text-5xl font-extrabold text-gray-900 mb-2"></h1>
+            <p id="eventSubtitle" class="text-lg text-gray-500 font-medium">Cargando fotos...</p>
+        </div>
+
+        <div class="flex justify-center mb-8">
+            <button id="downloadAllBtn" class="bg-purple-600 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg hover:bg-purple-700 transition-colors duration-200">
+                Descargar Todas las Fotos
+            </button>
+        </div>
+
+        <div id="photosGrid" class="photo-grid">
+            </div>
+
+        <div id="noPhotosMessage" class="hidden text-center text-gray-500 mt-10">
+            <p>Aún no hay fotos en este evento. ¡Sé el primero en tomar una! 📸</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, doc, getDoc, collection, query, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // Configuración de Firebase - Reemplaza con tus credenciales
+        const firebaseConfig = {
+          apiKey: "AIzaSyAtqUp56hdHr9ShFvYyRhexFhFYG-UmBF4",
+          authDomain: "cabina-1dbe7.firebaseapp.com",
+          projectId: "cabina-1dbe7",
+          storageBucket: "cabina-1dbe7.firebasestorage.app",
+          messagingSenderId: "176812523438",
+          appId: "1:176812523438:web:e78ab1c349f3dbfc58d23f",
+          measurementId: "G-7YJL45YK6T"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Referencias a los elementos del DOM
+        const eventTitleEl = document.getElementById('eventTitle');
+        const eventSubtitleEl = document.getElementById('eventSubtitle');
+        const photosGrid = document.getElementById('photosGrid');
+        const noPhotosMessage = document.getElementById('noPhotosMessage');
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+
+        // Obtener el ID del evento de la URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('id');
+        if (!eventId) {
+            alert('ID del evento no encontrado. Por favor, usa el enlace del panel de administración.');
+            window.location.href = 'admin.html';
+        }
+
+        // ----------------- LÓGICA DE INICIALIZACIÓN -----------------
+        let photosUrls = [];
+
+        signInAnonymously(auth).then(() => {
+            // Cargar el título del evento
+            const eventDocRef = doc(db, 'events', eventId);
+            getDoc(eventDocRef).then(docSnap => {
+                if (docSnap.exists()) {
+                    eventTitleEl.textContent = docSnap.data().title;
+                } else {
+                    eventTitleEl.textContent = 'Evento no encontrado';
+                    eventSubtitleEl.textContent = '';
+                }
+            }).catch(error => {
+                console.error("Error al obtener el título del evento:", error);
+                eventTitleEl.textContent = 'Error';
+                eventSubtitleEl.textContent = 'No se pudo cargar el evento.';
+            });
+
+            // Escuchar fotos en tiempo real
+            const photosColRef = collection(db, 'events', eventId, 'photos');
+            const q = query(photosColRef, orderBy('createdAt', 'desc'));
+
+            onSnapshot(q, (snapshot) => {
+                photosUrls = []; // Limpiar el array de URLs
+                photosGrid.innerHTML = ''; // Limpiar la cuadrícula
+                
+                if (snapshot.empty) {
+                    noPhotosMessage.classList.remove('hidden');
+                    eventSubtitleEl.textContent = 'No hay fotos todavía.';
+                    downloadAllBtn.disabled = true;
+                } else {
+                    noPhotosMessage.classList.add('hidden');
+                    eventSubtitleEl.textContent = `Total de fotos: ${snapshot.size}`;
+                    downloadAllBtn.disabled = false;
+                    
+                    snapshot.docs.forEach(doc => {
+                        const photoData = doc.data();
+                        photosUrls.push(photoData.url); // Almacenar la URL para la descarga
+                        
+                        const photoItem = document.createElement('div');
+                        photoItem.className = 'photo-item rounded-lg shadow-md overflow-hidden bg-gray-200';
+                        photoItem.innerHTML = `
+                            <img src="${photoData.url}" alt="Foto de la cabina" class="rounded-lg">
+                        `;
+                        photosGrid.appendChild(photoItem);
+                    });
+                }
+            });
+        }).catch((error) => {
+            console.error("Error de autenticación: ", error);
+            eventTitleEl.textContent = 'Error';
+            eventSubtitleEl.textContent = 'Error al conectar con la base de datos.';
+        });
+
+        // ----------------- LÓGICA PARA DESCARGAR TODAS LAS FOTOS -----------------
+        downloadAllBtn.addEventListener('click', async () => {
+            if (photosUrls.length === 0) {
+                alert('No hay fotos para descargar.');
+                return;
+            }
+
+            eventSubtitleEl.textContent = 'Preparando descarga... Por favor, espera.';
+            downloadAllBtn.disabled = true;
+
+            const zip = new JSZip();
+            const fetchPromises = photosUrls.map(async (url, index) => {
+                try {
+                    const response = await fetch(url);
+                    const blob = await response.blob();
+                    const fileName = `foto_${index + 1}.jpeg`;
+                    zip.file(fileName, blob);
+                } catch (error) {
+                    console.error(`Error al descargar la foto ${index + 1}: ${error}`);
+                }
+            });
+
+            await Promise.all(fetchPromises);
+
+            zip.generateAsync({ type: 'blob' })
+                .then(function(content) {
+                    saveAs(content, `fotos_evento_${eventId}.zip`);
+                    eventSubtitleEl.textContent = `Descarga completada. Total de fotos: ${photosUrls.length}`;
+                })
+                .catch(error => {
+                    console.error("Error al generar el ZIP: ", error);
+                    eventSubtitleEl.textContent = 'Error al crear el archivo de descarga.';
+                })
+                .finally(() => {
+                    downloadAllBtn.disabled = false;
+                });
+        });
+    </script>
+</body>
+</html>

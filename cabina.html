@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Booth</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-top: 75%; /* 4:3 Aspect Ratio */
+            max-width: 640px;
+            margin: auto;
+        }
+        .video-container video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white p-4 flex flex-col items-center justify-center min-h-screen">
+    <div class="w-full max-w-4xl text-center">
+        <h1 id="eventTitle" class="text-4xl md:text-5xl font-extrabold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600"></h1>
+
+        <div id="videoContainer" class="video-container rounded-lg shadow-xl overflow-hidden mb-6 border-4 border-gray-700">
+            <video id="webcam" autoplay playsinline class="w-full"></video>
+            <canvas id="photoCanvas" class="hidden"></canvas>
+        </div>
+
+        <button id="captureBtn" class="bg-blue-600 text-white font-bold py-4 px-8 rounded-full text-xl shadow-lg transition-transform transform hover:scale-105 active:scale-95 duration-200">
+            Tomar Foto
+        </button>
+
+        <p id="statusMessage" class="mt-4 text-sm text-gray-400 font-semibold"></p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, doc, getDoc, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+        // Configuración de Firebase - Reemplaza con tus credenciales
+        const firebaseConfig = {
+          apiKey: "AIzaSyAtqUp56hdHr9ShFvYyRhexFhFYG-UmBF4",
+          authDomain: "cabina-1dbe7.firebaseapp.com",
+          projectId: "cabina-1dbe7",
+          storageBucket: "cabina-1dbe7.firebasestorage.app",
+          messagingSenderId: "176812523438",
+          appId: "1:176812523438:web:e78ab1c349f3dbfc58d23f",
+          measurementId: "G-7YJL45YK6T"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        // Referencias a los elementos del DOM
+        const webcam = document.getElementById('webcam');
+        const photoCanvas = document.getElementById('photoCanvas');
+        const captureBtn = document.getElementById('captureBtn');
+        const eventTitleEl = document.getElementById('eventTitle');
+        const statusMessage = document.getElementById('statusMessage');
+
+        // Obtener el ID del evento de la URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const eventId = urlParams.get('id');
+        if (!eventId) {
+            alert('ID del evento no encontrado. Por favor, usa el enlace del panel de administración.');
+            window.location.href = 'admin.html';
+        }
+
+        // ----------------- LÓGICA DE INICIALIZACIÓN -----------------
+        signInAnonymously(auth).then(() => {
+            // Mostrar el título del evento
+            const eventDocRef = doc(db, 'events', eventId);
+            getDoc(eventDocRef).then(docSnap => {
+                if (docSnap.exists()) {
+                    eventTitleEl.textContent = docSnap.data().title;
+                } else {
+                    eventTitleEl.textContent = 'Evento no encontrado';
+                    statusMessage.textContent = 'El evento al que intentas acceder no existe.';
+                }
+            }).catch(error => {
+                console.error("Error al obtener el título del evento:", error);
+                statusMessage.textContent = 'Error al cargar el evento.';
+            });
+
+            // Acceder a la cámara del dispositivo
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+                    .then(stream => {
+                        webcam.srcObject = stream;
+                    })
+                    .catch(error => {
+                        console.error("Error al acceder a la cámara: ", error);
+                        statusMessage.textContent = 'Error: No se pudo acceder a la cámara. Revisa los permisos.';
+                    });
+            } else {
+                statusMessage.textContent = 'Error: La función de cámara no está soportada en este navegador.';
+            }
+        }).catch((error) => {
+            console.error("Error al iniciar sesión anónima: ", error);
+            statusMessage.textContent = 'Error de autenticación. Revisa la consola.';
+        });
+
+        // ----------------- LÓGICA PARA TOMAR Y SUBIR FOTOS -----------------
+        captureBtn.addEventListener('click', () => {
+            if (!webcam.srcObject) {
+                statusMessage.textContent = "Cámara no disponible.";
+                return;
+            }
+            
+            statusMessage.textContent = "Capturando foto...";
+            
+            // Configurar el canvas para la captura
+            const context = photoCanvas.getContext('2d');
+            photoCanvas.width = webcam.videoWidth;
+            photoCanvas.height = webcam.videoHeight;
+            context.drawImage(webcam, 0, 0, photoCanvas.width, photoCanvas.height);
+            
+            // Convertir la imagen del canvas a una cadena Base64
+            const imageDataURL = photoCanvas.toDataURL('image/jpeg', 0.9);
+            
+            uploadPhoto(imageDataURL);
+        });
+
+        async function uploadPhoto(imageDataURL) {
+            statusMessage.textContent = "Subiendo foto...";
+            captureBtn.disabled = true; // Deshabilitar el botón durante la subida
+
+            try {
+                // Crear una referencia en Firebase Storage con un nombre único
+                const photoName = `photo_${Date.now()}.jpeg`;
+                const storageRef = ref(storage, `images/${eventId}/${photoName}`);
+
+                // Subir la imagen Base64 a Storage
+                await uploadString(storageRef, imageDataURL, 'data_url');
+                
+                // Obtener la URL de descarga de la imagen
+                const photoURL = await getDownloadURL(storageRef);
+
+                // Guardar la URL en Firestore
+                const photosColRef = collection(db, 'events', eventId, 'photos');
+                await addDoc(photosColRef, {
+                    url: photoURL,
+                    createdAt: serverTimestamp()
+                });
+
+                statusMessage.textContent = "¡Foto subida con éxito! 🎉";
+            } catch (error) {
+                console.error("Error al subir la foto: ", error);
+                statusMessage.textContent = `Error: ${error.message}`;
+            } finally {
+                captureBtn.disabled = false; // Habilitar el botón de nuevo
+            }
+        }
+    </script>
+</body>
+</html>
